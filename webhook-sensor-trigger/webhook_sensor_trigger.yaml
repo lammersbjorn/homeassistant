@@ -1,0 +1,79 @@
+# Webhook Trigger from Binary Sensor Blueprint
+# BSD 3-Clause License
+# Copyright (c) 2025 Bjorn Lammers
+# Repository: https://github.com/lammersbjorn/homeassistant
+
+blueprint:
+  name: "Webhook Trigger from Binary Sensor"
+  description: >
+    **IMPORTANT:** Before using this automation, please add the following snippet
+    to your `configuration.yaml`:
+
+    ```yaml
+    rest_command:
+      send_webhook_request:
+        url: "{{ url }}"
+        method: POST
+        payload: "{{ payload }}"
+        content_type: "application/json"
+    ```
+
+    For more details, see [the repo](https://github.com/lammersbjorn/homeassistant/webhook-sensor-trigger).
+
+    This blueprint sends an HTTP POST webhook to a specified URL when a binary sensor
+    changes state (for example, from off to on). It's great for triggering external
+    services right when an event happens.
+  domain: automation
+  author: "Bjorn Lammers"
+  source_url: "https://github.com/lammersbjorn/homeassistant"
+
+  input:
+    binary_sensor:
+      name: Binary Sensor
+      description: >
+        Select the binary sensor you want to monitor. The webhook is sent when its state
+        changes.
+      selector:
+        entity:
+          domain: binary_sensor
+
+    trigger_state:
+      name: Trigger State
+      description: >
+        Specify the sensor state that will trigger the webhook, typically "on" (or "off")
+        based on your sensor.
+      default: "on"
+      selector:
+        select:
+          options:
+            - "on"
+            - "off"
+
+    webhook_url:
+      name: Webhook URL
+      description: >
+        Enter the full URL for the webhook. This is where the HTTP POST request will be sent.
+      default: "https://example.com/webhook"
+      selector:
+        text:
+          multiline: false
+
+    payload:
+      name: Webhook Payload
+      description: >
+        Optionally provide a JSON payload to send with the webhook request.
+      default: "{}"
+      selector:
+        text:
+          multiline: true
+
+trigger:
+  platform: state
+  entity_id: !input binary_sensor
+  to: !input trigger_state
+
+action:
+  - service: rest_command.send_webhook_request
+    data:
+      url: !input webhook_url
+      payload: !input payload
