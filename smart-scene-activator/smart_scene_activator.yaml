@@ -1,0 +1,120 @@
+# Smart Scene Activator Blueprint
+# BSD 3-Clause License
+# Copyright (c) 2025 Bjorn Lammers
+# Repository: https://github.com/lammersbjorn/homeassistant
+
+blueprint:
+  name: "Smart Scene Activator"
+  description: >
+    Automatically switch between your day and night scenes based on the sun’s
+    position or custom times.
+  domain: script
+  author: "Bjorn Lammers"
+  source_url: "https://github.com/lammersbjorn/homeassistant"
+
+  input:
+    # ===== SCENE SETTINGS =====
+    day_scene:
+      name: Day Scene
+      description: >
+        Select the scene to activate during the day.
+      selector:
+        entity:
+          domain: scene
+
+    night_scene:
+      name: Night Scene
+      description: >
+        Select the scene to activate during the night.
+      selector:
+        entity:
+          domain: scene
+
+    # ===== MODE SETTINGS =====
+    mode:
+      name: Mode
+      description: >
+        Choose whether to base the activation on the sun’s position or your own times.
+      default: "Sun-based"
+      selector:
+        select:
+          options:
+            - "Sun-based"
+            - "Custom Times"
+
+    day_start_time:
+      name: Day Start Time
+      description: >
+        When using custom times, set the time when the day scene should start.
+      default: "07:00:00"
+      selector:
+        time:
+
+    night_start_time:
+      name: Night Start Time
+      description: >
+        When using custom times, set the time when the night scene should begin.
+      default: "19:00:00"
+      selector:
+        time:
+
+variables:
+  mode: !input mode
+  day_scene: !input day_scene
+  night_scene: !input night_scene
+  day_start_time: !input day_start_time
+  night_start_time: !input night_start_time
+
+sequence:
+  - choose:
+      # ===== SUN-BASED CONDITIONS =====
+      - conditions:
+          - condition: template
+            value_template: "{{ mode == 'Sun-based' }}"
+          - condition: sun
+            after: sunrise
+            before: sunset
+        sequence:
+          - service: scene.turn_on
+            target:
+              entity_id: "{{ day_scene }}"
+
+      - conditions:
+          - condition: template
+            value_template: "{{ mode == 'Sun-based' }}"
+          - condition: sun
+            after: sunset
+            before: sunrise
+        sequence:
+          - service: scene.turn_on
+            target:
+              entity_id: "{{ night_scene }}"
+
+      # ===== CUSTOM TIME CONDITIONS =====
+      - conditions:
+          - condition: template
+            value_template: "{{ mode == 'Custom Times' }}"
+          - condition: template
+            value_template: >
+              {% set now_time = now().time() %}
+              {% set day_start = strptime(day_start_time, '%H:%M:%S').time() %}
+              {% set night_start = strptime(night_start_time, '%H:%M:%S').time() %}
+              {{ day_start <= now_time < night_start }}
+        sequence:
+          - service: scene.turn_on
+            target:
+              entity_id: "{{ day_scene }}"
+
+      - conditions:
+          - condition: template
+            value_template: "{{ mode == 'Custom Times' }}"
+          - condition: template
+            value_template: >
+              {% set now_time = now().time() %}
+              {% set day_start = strptime(day_start_time, '%H:%M:%S').time() %}
+              {% set night_start = strptime(night_start_time, '%H:%M:%S').time() %}
+              {{ not (day_start <= now_time < night_start) }}
+        sequence:
+          - service: scene.turn_on
+            target:
+              entity_id: "{{ night_scene }}"
