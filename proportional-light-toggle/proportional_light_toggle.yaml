@@ -1,0 +1,75 @@
+# Proportional Light Toggle Blueprint
+# BSD 3-Clause License
+# Copyright (c) 2025 Bjorn Lammers
+# Repository: https://github.com/lammersbjorn/homeassistant
+
+blueprint:
+  name: "Proportional Light Toggle"
+  description: >
+    This blueprint dynamically toggles lights in a selected area based on how many
+    are currently on versus off. If more lights are on, they will be turned off,
+    and if more are off, they will be turned on.
+  domain: script
+  author: "Bjorn Lammers"
+  source_url: "https://github.com/lammersbjorn/homeassistant"
+
+  input:
+    # ===== AREA SETTINGS =====
+    target_area:
+      name: "Target Area"
+      description: >
+        Select the area where the lights (or devices with 'light' in their entity IDs)
+        will be toggled.
+      selector:
+        area: {}
+
+variables:
+  # Get the target area from the input.
+  target_area: !input target_area
+  
+  # Retrieve all light entities in the selected area.
+  lights: >
+    {{ expand(area_entities(target_area))
+       | selectattr('domain', 'eq', 'light')
+       | map(attribute='entity_id')
+       | list }}
+  
+  # For this blueprint, our devices are the same as the lights.
+  devices: >
+    {{ lights | unique | list }}
+  
+  # Count how many devices are on.
+  count_on: >
+    {{ devices | expand | selectattr('state', 'eq', 'on')
+       | list | count }}
+  
+  # Count how many devices are off.
+  count_off: >
+    {{ devices | expand | selectattr('state', 'eq', 'off')
+       | list | count }}
+  
+  # Decide the action: if more are on than off, switch off; otherwise, switch on.
+  action: >
+    {{ 'off' if count_on >= count_off else 'on' }}
+
+sequence:
+  - choose:
+      # ===== VALID DEVICES FOUND =====
+      - conditions:
+          - condition: template
+            value_template: "{{ devices | length > 0 }}"
+        sequence:
+          - service: "homeassistant.turn_{{ action }}"
+            target:
+              entity_id: >
+                {{ devices | join(',') }}
+      # ===== NO VALID DEVICES FOUND =====
+      - conditions:
+          - condition: template
+            value_template: "{{ devices | length == 0 }}"
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "Proportional Toggle Error"
+              message: >
+                No valid light entities found in the selected area: {{ target_area }}.
