@@ -1,0 +1,353 @@
+# AI Motion Alert & Snapshot Blueprint
+# BSD 3-Clause License
+# Copyright (c) 2025 Bjorn Lammers
+# Repository: https://github.com/lammersbjorn/homeassistant
+
+blueprint:
+  name: "AI Motion Alert & Snapshot"
+  description: >
+    When motion or a change in camera state is detected, capture a snapshot and use AI to
+    create a simple description. You will get a notification with the image and a short,
+    AI-generated summary of what’s happening.
+  domain: automation
+  author: "Bjorn Lammers"
+  source_url: "https://github.com/lammersbjorn/homeassistant"
+
+  input:
+    # ===== TRIGGER CONFIGURATION =====
+    camera_entities:
+      name: Camera Entities
+      description: >
+        Choose the camera(s) to watch. A change (like switching to 'recording') on any of
+        these cameras will trigger the alert.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: camera
+
+    motion_sensors:
+      name: Motion Sensors
+      description: >
+        Choose motion sensors that can also trigger the alert if a camera isn’t available.
+        When used as pairs, make sure the order matches that of the cameras.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: binary_sensor
+
+    trigger_state:
+      name: Trigger State
+      description: >
+        Specify the camera state (for example, 'recording') that will trigger the alert.
+      default: "recording"
+      selector:
+        text:
+
+    # ===== NOTIFICATION SETTINGS =====
+    notify_device:
+      name: Notify Device(s)
+      description: >
+        Select the devices (with the Home Assistant mobile app) that should receive the alert.
+      default: []
+      selector:
+        device:
+          multiple: true
+          filter:
+            integration: mobile_app
+
+    notification_title:
+      name: Notification Title
+      description: "Title shown in the notification."
+      default: "Motion Detected"
+      selector:
+        text:
+
+    notification_message:
+      name: Notification Message
+      description: >
+        The message content of the notification. Use the template
+        {{ response.response_text }} to include the AI description.
+      default: "{{ response is defined and response.response_text or 'No details available.' }}"
+      selector:
+        text:
+
+    notification_icon:
+      name: Notification Icon
+      description: >
+        Material Design Icon (mdi) to show with the notification. Example: mdi:bell.
+      default: "mdi:bell"
+      selector:
+        icon:
+
+    tap_navigate:
+      name: Navigation Path
+      description: >
+        The URL or app path to open when the notification is tapped, such as
+        /lovelace/cameras or an app-specific URL.
+      default: "app://com.cameraapp.example"
+      selector:
+        text:
+
+    # ===== AI ANALYSIS SETTINGS =====
+    provider:
+      name: AI Provider
+      description: >
+        Choose the AI provider used to analyze the image. Requires the LLMVision integration.
+      selector:
+        config_entry:
+          integration: llmvision
+
+    model:
+      name: AI Model
+      description: >
+        Specify the AI model to use for analyzing the image.
+      default: "gpt-4o-mini"
+      selector:
+        text:
+
+    message:
+      name: AI Prompt
+      description: >
+        What should the AI look for in the image? For example, you could ask it to
+        mention people or activities.
+      default: >
+        Provide a brief description of any people or activities visible.
+        If no people are present, say so.
+      selector:
+        text:
+
+    max_tokens:
+      name: Max Tokens
+      description: >
+        Maximum number of words or tokens to include in the AI response.
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 1000
+
+    target_width:
+      name: Target Width
+      description: >
+        Resize the snapshot to this width (in pixels) before passing it to the AI.
+      default: 1280
+      selector:
+        number:
+          min: 512
+          max: 3840
+
+    detail:
+      name: Detail Level
+      description: >
+        Set how detailed the AI description should be. Choose "high" for more details
+        or "low" for a shorter summary.
+      default: "high"
+      selector:
+        select:
+          options:
+            - "high"
+            - "low"
+
+    temperature:
+      name: Temperature
+      description: >
+        Change how creative the AI response should be. Lower values make the result more
+        predictable.
+      default: 0.2
+      selector:
+        number:
+          min: 0.1
+          max: 1.0
+          step: 0.1
+
+    important:
+      name: Important Mode
+      description: >
+        Enable this to let the blueprint do an extra check to see how urgent the event is.
+      default: false
+      selector:
+        boolean:
+
+    importance_provider:
+      name: Importance AI Provider
+      description: >
+        Choose the AI provider for checking how important or urgent the event is.
+      selector:
+        config_entry:
+          integration: llmvision
+
+    importance_model:
+      name: Importance AI Model
+      description: >
+        Specify the AI model for the importance check.
+      default: "gemini-1.5-flash-latest"
+      selector:
+        text:
+
+    remember:
+      name: Remember Event
+      description: >
+        Set to true if you want to log this event for later review.
+        (Requires an Event Calendar integration.)
+      default: false
+      selector:
+        boolean:
+
+    # ===== COOLDOWN CONFIGURATION =====
+    cooldown:
+      name: Cooldown (minutes)
+      description: >
+        Time to wait between notifications. This helps avoid too many alerts too soon.
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 60
+
+variables:
+  important: !input important
+  remember: !input remember
+  cooldown: !input cooldown
+  notify_devices: !input notify_device
+  camera_entities_list: !input camera_entities
+  motion_sensors_list: !input motion_sensors
+  trigger_state: !input trigger_state
+
+  device_name_map: >
+    {% set ns = namespace(device_names=[]) %}
+    {% for device_id in notify_devices %}
+      {% set device_name = device_attr(device_id, "name") %}
+      {% set sanitized_name = "mobile_app_" + device_name | lower |
+         regex_replace("[' -]", "_") | regex_replace("[^a-z0-9_]", "") %}
+      {% set ns.device_names = ns.device_names + [sanitized_name] %}
+    {% endfor %}
+    {{ ns.device_names }}
+
+  importance_prompt: >
+    Classify event importance:
+    - "passive": not important
+    - "time-sensitive": important but not urgent
+    - "critical": urgent and serious
+    Reply with one word.
+
+trigger:
+  - platform: state
+    entity_id: !input camera_entities
+    to: !input trigger_state
+    id: "camera_trigger"
+
+  - platform: state
+    entity_id: !input motion_sensors
+    to: "on"
+    id: "motion_sensor_trigger"
+
+condition:
+  - condition: template
+    value_template: >
+      {% set last = state_attr(this.entity_id, 'last_triggered') %}
+      {{ last is none or ( now() - last ).total_seconds() / 60 > cooldown }}
+
+action:
+  # Choose the camera that triggered the alert.
+  - variables:
+      camera_entity: >
+        {% if trigger is defined %}
+          {% if trigger.id == 'motion_sensor_trigger' and trigger.entity_id in motion_sensors_list %}
+            {{ camera_entities_list[motion_sensors_list.index(trigger.entity_id)] }}
+          {% elif trigger.id == 'camera_trigger' %}
+            {{ trigger.entity_id }}
+          {% else %}
+            {{ camera_entities_list | first
+               if camera_entities_list | length > 0 else 'camera.default' }}
+          {% endif %}
+        {% else %}
+          {{ camera_entities_list | first
+             if camera_entities_list | length > 0 else 'camera.default' }}
+        {% endif %}
+
+  # Create timestamp and file paths for the snapshot and notification image.
+  - variables:
+      timestamp: "{{ now().strftime('%Y%m%d_%H%M%S') }}"
+      snapshot_path: "/media/tmp/snapshots/{{ camera_entity.replace('camera.', '') }}_snapshot_{{ timestamp }}.jpg"
+      notify_path: "{{ snapshot_path | replace('/media', '/media/local') }}"
+
+  # Take a snapshot from the selected camera.
+  - service: camera.snapshot
+    target:
+      entity_id: "{{ camera_entity }}"
+    data:
+      filename: "{{ snapshot_path }}"
+
+  # If Important Mode is active, perform a check on how urgent this event is.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ important }}"
+        sequence:
+          - service: llmvision.image_analyzer
+            data:
+              image_file: "{{ snapshot_path }}"
+              provider: !input importance_provider
+              model: !input importance_model
+              message: "{{ importance_prompt }}"
+              detail: low
+              max_tokens: 3
+              temperature: 0.1
+            response_variable: importance
+
+  # Use AI to analyze the snapshot and generate a description.
+  - service: llmvision.image_analyzer
+    data:
+      image_file: "{{ snapshot_path }}"
+      provider: !input provider
+      model: !input model
+      message: !input message
+      remember: !input remember
+      detail: !input detail
+      max_tokens: !input max_tokens
+      temperature: !input temperature
+      target_width: !input target_width
+    response_variable: response
+
+  # Wait for the AI response (up to 10 seconds).
+  - wait_template: "{{ response is defined and response.response_text is not none }}"
+    timeout: "00:00:10"
+    continue_on_timeout: true
+
+  # Set interruption level for the notification based on the importance analysis.
+  - variables:
+      interruption_level: >
+        {% if important and importance is defined %}
+          {% if importance.response_text | lower == 'critical' %}
+            critical
+          {% elif importance.response_text | lower == 'time-sensitive' %}
+            active
+          {% else %}
+            passive
+          {% endif %}
+        {% else %}
+          active
+        {% endif %}
+      tag: "{{ camera_entity + int(as_timestamp(now())) | string }}"
+      group: "{{ camera_entity }}"
+
+  # Send the notification to each configured device.
+  - repeat:
+      for_each: "{{ device_name_map }}"
+      sequence:
+        - service: "notify.{{ repeat.item }}"
+          data:
+            title: !input notification_title
+            message: !input notification_message
+            data:
+              notification_icon: !input notification_icon
+              image: "{{ notify_path }}"
+              url: !input tap_navigate
+              clickAction: !input tap_navigate
+              tag: "{{ tag }}"
+              group: "{{ group }}"
+              interruption-level: "{{ interruption_level }}"
